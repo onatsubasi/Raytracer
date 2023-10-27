@@ -36,8 +36,6 @@ public:
     Vec3i color; // color of the intersection point
 };
 
-Hit MeshIntersectionCheck(Ray ray, Mesh &mesh, const Scene &scene);
-
 Vec3f CrossProduct(Vec3f first, Vec3f second){
     Vec3f result = {0,0,0};
     result.x = first.y * second.z - first.z * second.y;
@@ -46,12 +44,13 @@ Vec3f CrossProduct(Vec3f first, Vec3f second){
 
     return result;
 }
-Vec3i Clamp(Vec3i &vector)
+Vec3f Clamp(Vec3f vector)
 {
-    vector.x = fmin(vector.x, 255);
-    vector.y = fmin(vector.y, 255);
-    vector.z = fmin(vector.z, 255);
-    return vector;
+    Vec3f result{};
+    result.x = fminf(vector.x, 255);
+    result.y = fminf(vector.y, 255);
+    result.z = fminf(vector.z, 255);
+    return result;
 }
 
 
@@ -97,72 +96,7 @@ Vec3f FindNormal(Vec3f a, Vec3f b, Vec3f c)
 
 float CalculateDistance(Vec3f a, Vec3f b)
 {
-    return sqrtf(pow((a.x-b.x),2)+pow((a.y-b.y),2)+pow((a.z-b.z),2));
-}
-
-float PixelHeight(const Camera &camera)
-{
-    // x-> left y-> right z-> bottom w-> top
-    return (camera.near_plane.w - camera.near_plane.z)/ camera.image_height;
-}
-
-float PixelWidth(const Camera &camera)
-{
-    return (camera.near_plane.y - camera.near_plane.x)/ camera.image_width;
-}
-
-Vec3i FindBackgroundColor(const Scene &scene)
-{
-    return scene.background_color;
-}
-
-Vec3f* BuildPixelPositionArray(const Camera &camera)
-{
-    float pw = PixelWidth(camera);
-    float ph = PixelHeight(camera);
-
-    Vec3f u = CrossProduct(camera.up, NegateVector(camera.gaze));
-
-    // -----Initialize the matrix ----------
-    Vec3f* result = new Vec3f[camera.image_width * camera.image_height];
-
-    for (int i =0; i< camera.image_width * camera.image_height; i++)
-    {
-        result[i] = {0,0,0};
-    }
-
-    int x = 0;
-    int y = 0;
-    for(int i = 0; i < camera.image_width * camera.image_height; i++)
-    {
-        
-        if(y >= camera.image_height)
-        {
-            y = 0;
-            x++;
-        }
-
-        // do calculation
-        result[i].y = -(camera.position.x +
-                                u.x * (camera.near_plane.x + ( x + 0.5f) * pw )+
-                                camera.up.x * (camera.near_plane.w - (y + 0.5f)*ph)+
-                                camera.gaze.x * camera.near_distance);
-
-        result[i].x = -(camera.position.y +
-                                u.y * (camera.near_plane.x + ( x + 0.5f) * pw )+
-                                camera.up.y * (camera.near_plane.w - (y + 0.5f)*ph)+
-                                camera.gaze.y * camera.near_distance);
-
-        result[i].z = camera.position.z +
-                                u.z * (camera.near_plane.x + ( x + 0.5f) * pw )+
-                                camera.up.z * (camera.near_plane.w - (y + 0.5f) * ph)+
-                                camera.gaze.z * camera.near_distance;
-
-        y++;
-
-    }
-
-    return result;
+    return sqrtf(powf((a.x-b.x),2)+powf((a.y-b.y),2)+powf((a.z-b.z),2));
 }
 
 Ray SendRay(const Camera &camera, int i, int j)
@@ -297,10 +231,10 @@ Hit TriangleIntersection(const Ray &ray, Vec3f a, Vec3f b, Vec3f c)
     return result_hit;
 }
 
-Hit MeshIntersection(Ray ray, const Mesh &mesh, const Scene &scene)
+Hit MeshIntersection(Ray ray, const Mesh &mesh, const Scene &scene, double dist = 0.0)
 {
     int faceCount = mesh.faces.size();
-    float t_minMesh = numeric_limits<float>::infinity();
+    double t_minMesh = ray.isShadow? dist: numeric_limits<double>::infinity();
     Hit resultHit{};
 
     for(int faceIndex = 0; faceIndex < faceCount; faceIndex++)
@@ -312,6 +246,11 @@ Hit MeshIntersection(Ray ray, const Mesh &mesh, const Scene &scene)
         Hit hit = TriangleIntersection(ray, a, b, c);
         if(hit.hit && hit.t < t_minMesh)
         {
+            if(ray.isShadow)
+            {
+                resultHit = hit;
+                return resultHit;
+            }
             t_minMesh = hit.t;
             hit.materialID = mesh.material_id;
             resultHit = hit;
@@ -320,292 +259,219 @@ Hit MeshIntersection(Ray ray, const Mesh &mesh, const Scene &scene)
     return resultHit;
 }
 
-
-Hit MeshIntersectionCheck(Ray ray, const Mesh &mesh, const Scene &scene)
-{
-    int faceCount = mesh.faces.size();
-    float t_minMesh = numeric_limits<float>::infinity();
-    Hit resultHit{};
-
-    for(int faceIndex = 0; faceIndex < faceCount; faceIndex++)
-    {
-        Vec3f a = scene.vertex_data[mesh.faces[faceIndex].v0_id - 1];
-        Vec3f b = scene.vertex_data[mesh.faces[faceIndex].v1_id - 1];
-        Vec3f c = scene.vertex_data[mesh.faces[faceIndex].v2_id - 1];
-
-        Hit hit = TriangleIntersection(ray, a, b, c);
-        if(hit.hit)
-        {
-            t_minMesh = hit.t;
-            hit.materialID = mesh.material_id;
-            resultHit = hit;
-            return resultHit;
-        }
-    }
-    return resultHit;
-}
-
-Vec3f CalculateAmbientShading(const Scene &scene, Material mat)
-{
-    Vec3f newColor{};
-
-    newColor.x = scene.ambient_light.x * mat.ambient.x;
-    newColor.y = scene.ambient_light.y * mat.ambient.y;
-    newColor.z = scene.ambient_light.z * mat.ambient.z;
-
-    return newColor;
-}
-
-Vec3i ComputeColor(Hit hit, Ray ray,Scene scene);
-
-Vec3i CalculateShading(const Scene &scene, Material mat, Hit hit, Ray viewRay)
+Hit ClosestHit(Ray ray, const Scene &scene)
 {
     int numOfSpheres = scene.spheres.size();
     int numOfTriangles = scene.triangles.size();
     int numOfMeshes = scene.meshes.size();
-    int numOfLights = scene.point_lights.size();
-    Vec3i newColor = {0,0,0};
+    Hit currentHit{};
+    float t_min = std::numeric_limits<float>::infinity();
 
-    if(mat.is_mirror)
+    for(int s_index = 0; s_index < numOfSpheres; s_index++)
     {
-        /***
-        Vec3f reflectionDirection = MultiplyVector((SubtractVectors(hit.normal,viewRay.direction)),2*(DotProduct(hit.normal,viewRay.direction)));
+        int centerID = scene.spheres[s_index].center_vertex_id - 1;
+        Hit newHit = SphereIntersection(ray,scene.spheres[s_index],scene.vertex_data[centerID]);
 
-        //Ray reflectionRay = Ray(hit.x,reflectionDirection); // reflection ray
-        Ray reflectionRay {hit.x, reflectionDirection};
-        reflectionRay.depth++;
-        Vec3i computedColor = ComputeColor(hit,reflectionRay,scene);
+        if(newHit.hit && (newHit.t < t_min))
+        {
+            t_min = newHit.t;
+            currentHit = newHit;
+            currentHit.materialID = scene.spheres[s_index].material_id;
+        }
 
-        newColor.x += computedColor.x * mat.mirror.x;
-        newColor.y += computedColor.y * mat.mirror.y;
-        newColor.z += computedColor.z * mat.mirror.z;
-        ***/
-        
     }
 
-    for(int light_index = 0; light_index < numOfLights; light_index++)
+    for(int t_index = 0; t_index < numOfTriangles; t_index++)
     {
-        PointLight light = scene.point_lights[light_index];
-        bool isClear = true;
+        Face points = scene.triangles[t_index].indices;
+        int pointAIndex = points.v0_id - 1;
+        int pointBIndex = points.v1_id - 1;
+        int pointCIndex = points.v2_id - 1;
+        Hit newHit = TriangleIntersection(ray,scene.vertex_data[pointAIndex],scene.vertex_data[pointBIndex],scene.vertex_data[pointCIndex]);
 
-        Vec3f epsilonedPoint = SumVectors(MultiplyVector(hit.normal, scene.shadow_ray_epsilon), hit.x);
-        float dist = CalculateDistance(light.position,hit.x);
-
-        Vec3f l = Normalize(SubtractVectors(light.position,hit.x));
-
-        Ray currentRay = {epsilonedPoint, l};
-        Hit currentHit {};
-        // float t_min = numeric_limits<float>::infinity();
-        // ---Check for intersections
-        for(int t_index = 0; t_index < numOfTriangles && isClear; t_index++)
+        if(newHit.hit && (newHit.t < t_min))
         {
-            Face points = scene.triangles[t_index].indices;
-            int pointAIndex = points.v0_id - 1;
-            int pointBIndex = points.v1_id - 1;
-            int pointCIndex = points.v2_id - 1;
-            Hit newHit = TriangleIntersection(currentRay,scene.vertex_data[pointAIndex],scene.vertex_data[pointBIndex],scene.vertex_data[pointCIndex]);
-
-            if(newHit.hit && newHit.t < dist)
-            {
-                isClear = false;
-            }
+            t_min = newHit.t;
+            currentHit = newHit;
+            currentHit.materialID = scene.triangles[t_index].material_id;
         }
-
-        for(int s_index = 0; s_index < numOfSpheres && isClear; s_index++)
-        {
-            int centerID = scene.spheres[s_index].center_vertex_id - 1;
-            Hit newHit = SphereIntersection(currentRay,scene.spheres[s_index],scene.vertex_data[centerID]);
-
-            if(newHit.hit && newHit.t < dist)
-            {
-                isClear = false;
-            }
-        }
-
-        for(int m_index = 0; m_index < numOfMeshes && isClear; m_index++)
-        {
-            Hit newHit = MeshIntersectionCheck(currentRay, scene.meshes[m_index], scene);
-
-            if(newHit.hit && newHit.t < dist)
-            {
-                isClear = false;
-            }
-        }
-
-        if(!isClear)
-            continue; //try the other light
-
-        float cosTheta = DotProduct(hit.normal,l);
-        if(cosTheta < 0)
-        {
-            continue;
-        }
-
-        Vec3f h = Normalize(SubtractVectors(l,viewRay.direction));
-        float cosAlpha = fmax(0,DotProduct(h,hit.normal));
-
-        Vec3f L_i = {light.intensity.x / (dist * dist), light.intensity.y / (dist * dist), light.intensity.z / (dist * dist)};
-        //Vec3f color = CalculateAmbientShading(scene,mat);
-
-        newColor.x += L_i.x * mat.diffuse.x * cosTheta;
-        newColor.x += L_i.x * mat.specular.x * powf(cosAlpha, mat.phong_exponent);
-        //newColor.x += color.x;
-
-
-        newColor.y += L_i.y * mat.diffuse.y * cosTheta;
-        newColor.y += L_i.y * mat.specular.y * powf(cosAlpha, mat.phong_exponent);
-        //newColor.y += color.y;
-
-        newColor.z += L_i.z * mat.diffuse.z * cosTheta;
-        newColor.z += L_i.z * mat.specular.z * powf(cosAlpha, mat.phong_exponent);
-        //newColor.z += color.z;
     }
 
-    // add ambient color just once
-    Vec3f ambientColor = CalculateAmbientShading(scene,mat);
-    newColor.x += ambientColor.x;
-    newColor.y += ambientColor.y;
-    newColor.z += ambientColor.z;
+    for(int m_index = 0; m_index < numOfMeshes; m_index++)
+    {
+        Hit newHit = MeshIntersection(ray, scene.meshes[m_index], scene);
 
-    return Clamp(newColor);
+        if(newHit.hit && (newHit.t < t_min))
+        {
+            t_min = newHit.t;
+            currentHit = newHit;
+            currentHit.materialID = scene.meshes[m_index].material_id;
+        }
+    }
+    return currentHit;
 }
 
-Vec3i ComputeColor(Hit hit, Ray ray,Scene scene)
+bool InShadow(Hit hit, const Scene &scene, PointLight I)
 {
-    if(ray.depth > scene.max_recursion_depth)
+    int numOfSpheres = scene.spheres.size();
+    int numOfTriangles = scene.triangles.size();
+    int numOfMeshes = scene.meshes.size();
+
+    Vec3f lightPos = I.position;
+    Vec3f epsilonedPoint = SumVectors(MultiplyVector(hit.normal, scene.shadow_ray_epsilon), hit.x);
+    double dist = CalculateDistance(lightPos,epsilonedPoint);
+    Vec3f direction = Normalize(SubtractVectors(lightPos, epsilonedPoint));
+    Ray shadowRay {epsilonedPoint, direction, true, 0};
+
+
+    for(int m_index = 0; m_index < numOfMeshes; m_index++)
     {
-        return {0,0,0};
+        Mesh mesh = scene.meshes[m_index];
+        if(MeshIntersection(shadowRay, mesh, scene, dist).hit)
+            return true;
     }
 
-    if(hit.hit)
+    for(int t_index = 0; t_index < numOfTriangles; t_index++)
     {
-        return CalculateShading(scene,scene.materials[hit.materialID-1],hit,ray);
+        Face points = scene.triangles[t_index].indices;
+        int pointAIndex = points.v0_id - 1;
+        int pointBIndex = points.v1_id - 1;
+        int pointCIndex = points.v2_id - 1;
+        Hit newHit = TriangleIntersection(shadowRay, scene.vertex_data[pointAIndex],scene.vertex_data[pointBIndex],scene.vertex_data[pointCIndex]);
+        if(newHit.hit && newHit.t < dist) return true;
     }
-    else if(ray.depth == 0)
+    for(int s_index = 0; s_index < numOfSpheres; s_index++)
     {
-        return scene.background_color;
+        Sphere sphere = scene.spheres[s_index];
+        int centerID = scene.spheres[s_index].center_vertex_id - 1;
+        Hit newHit = SphereIntersection(shadowRay,sphere,scene.vertex_data[centerID]);
+        if(newHit.hit && newHit.t < dist) return true;
     }
-    
-    return {0,0,0};
+    return false;
+}
+Vec3f ApplyShading(Ray viewRay, Hit hit, const Scene &scene);
+Vec3f ComputeColor(Ray viewRay, const Scene scene);
+
+Ray Reflect(Ray ray, Hit hit, const float epsilon)
+{
+    Vec3f epsilonedPoint = SumVectors(MultiplyVector(hit.normal, epsilon), hit.x);
+    Vec3f wo = NegateVector(ray.direction);
+    Vec3f wr = Normalize(SubtractVectors(MultiplyVector(hit.normal,(2 * DotProduct(hit.normal, wo))) , wo)); //TODO need to check if something goes wrong.
+    return {epsilonedPoint, wr};
 }
 
+Vec3f DiffuseTerm(Hit hit, PointLight light, Material material)
+{
+    Vec3f result{};
+    Vec3f l = Normalize(SubtractVectors(light.position, hit.x));
+    float cosTheta = DotProduct(hit.normal, l);
+    if(cosTheta <= 0) return {0,0,0};
+    float dist = CalculateDistance(light.position, hit.x);
+    Vec3f L_i = {light.intensity.x / (dist * dist), light.intensity.y / (dist * dist), light.intensity.z / (dist * dist)};
+    result.x = L_i.x * material.diffuse.x * cosTheta;
+    result.y = L_i.y * material.diffuse.y * cosTheta;
+    result.z = L_i.z * material.diffuse.z * cosTheta;
+    return result;
+}
+
+Vec3f SpecularTerm(Ray viewRay, Hit hit, PointLight light, Material material)
+{
+    Vec3f result{};
+    Vec3f l = Normalize(SubtractVectors(light.position, hit.x));
+    Vec3f h = Normalize(SubtractVectors(l,viewRay.direction));
+    float cosTheta = DotProduct(hit.normal, l);
+    if(cosTheta <= 0) return {0,0,0};
+    float cosAlpha = fmax(0, DotProduct(h,hit.normal));
+    float dist = CalculateDistance(light.position, hit.x);
+    Vec3f L_i = {light.intensity.x / (dist * dist), light.intensity.y / (dist * dist), light.intensity.z / (dist * dist)};
+    result.x = L_i.x * material.specular.x * powf(cosAlpha, material.phong_exponent);
+    result.y = L_i.y * material.specular.y * powf(cosAlpha, material.phong_exponent);
+    result.z = L_i.z * material.specular.z * powf(cosAlpha, material.phong_exponent);
+    return result;
+}
+
+Vec3f ApplyShading(Ray viewRay, Hit hit, const Scene &scene)
+{
+    int numOfLights = scene.point_lights.size();
+    Material material = scene.materials[hit.materialID - 1];
+    Vec3f color {material.ambient.x * scene.ambient_light.x, material.ambient.y * scene.ambient_light.y, material.ambient.z * scene.ambient_light.z};
+    if(material.is_mirror)
+    {
+        Ray reflectionRay = Reflect(viewRay, hit, scene.shadow_ray_epsilon);
+        reflectionRay.depth = viewRay.depth + 1;
+
+        color.x += ComputeColor(reflectionRay, scene).x * material.mirror.x;
+        color.y += ComputeColor(reflectionRay, scene).y * material.mirror.y;
+        color.z += ComputeColor(reflectionRay, scene).z * material.mirror.z;
+    }
+    for(int l_index = 0; l_index < numOfLights; l_index++)
+    {
+        PointLight I = scene.point_lights[l_index];
+        if(!InShadow(hit, scene, I))
+        {
+
+            Vec3f diffuseTerm = DiffuseTerm(hit, I, material);
+            Vec3f specularTerm = SpecularTerm(viewRay, hit, I, material);
+            color.x += diffuseTerm.x + specularTerm.x;
+            color.y += diffuseTerm.y + specularTerm.y;
+            color.z += diffuseTerm.z + specularTerm.z;
+        }
+    }
+    return color;
+}
+
+Vec3f ComputeColor(Ray viewRay, const Scene scene)
+{
+    if(viewRay.depth > scene.max_recursion_depth)
+        return {0,0,0};
+
+    Hit closestHit = ClosestHit(viewRay, scene);
+    if(closestHit.hit)
+        return ApplyShading(viewRay, closestHit, scene);
+    else if (viewRay.depth == 0)
+    {
+        Vec3f result{};
+        result.x = scene.background_color.x;
+        result.y = scene.background_color.y;
+        result.z = scene.background_color.z;
+        return result;
+    }
+    else
+        return {0,0,0};
+}
 
 int main(int argc, char* argv[])
 {
-    // Sample usage for reading an XML scene file
     parser::Scene scene;
 
     scene.loadFromXml(argv[1]);
 
-    // The code below creates a test pattern and writes
-    // it to a PPM file to demonstrate the usage of the
-    // ppm_write function.
-    //
-    // Normally, you would be running your ray tracing
-    // code here to produce the desired image.
-
-    const RGB BAR_COLOR[8] =
+    int numOfCameras = scene.cameras.size();
+    for(int c_index = 0; c_index < numOfCameras; c_index++)
     {
-        { 255, 255, 255 },  // 100% White
-        { 255, 255,   0 },  // Yellow
-        {   0, 255, 255 },  // Cyan
-        {   0, 255,   0 },  // Green
-        { 255,   0, 255 },  // Magenta
-        { 255,   0,   0 },  // Red
-        {   0,   0, 255 },  // Blue
-        {   0,   0,   0 },  // Black
-    };
+        Camera currentCam = scene.cameras[0];
+        int width = currentCam.image_width , height = currentCam.image_height;
 
-    Vec3i backGroundColor = FindBackgroundColor(scene);
-    Camera currentCam = scene.cameras[0];
-    int width = currentCam.image_width , height = currentCam.image_height;
-   
-   int numOfSpheres = scene.spheres.size();
-   int numOfTriangles = scene.triangles.size();
-   int numOfMeshes = scene.meshes.size();
 
-    unsigned char* image = new unsigned char [width * height * 3];
-    Vec3f* pixelPositions = BuildPixelPositionArray(currentCam);
+        unsigned char* image = new unsigned char [width * height * 3];
 
-    int i = 0;
-    int j = 0; // For tracking current pixel ID
-    for (int y = 0; y < height; ++y)
-    {
-        for (int x = 0; x < width; ++x)
+        int pixel_index = 0;
+        for (int y = 0; y < height; ++y)
         {
-            //int colIdx = x / columnWidth;
-            //image[i++] = BAR_COLOR[colIdx][0];
-            //image[i++] = BAR_COLOR[colIdx][1];
-            //image[i++] = BAR_COLOR[colIdx][2];
-
-            //Ray currentRay = Ray(currentCam.position, Normalize(SubtractVectors(pixelPositions[j],currentCam.position)));
-            Ray currentRay = SendRay(currentCam, y, x);
-            Hit currentHit{};
-            float t_min = std::numeric_limits<float>::infinity();
-
-            for(int s_index = 0; s_index < numOfSpheres; s_index++)
+            for (int x = 0; x < width; ++x)
             {
-                int centerID = scene.spheres[s_index].center_vertex_id - 1;
-                Hit newHit = SphereIntersection(currentRay,scene.spheres[s_index],scene.vertex_data[centerID]);
 
-                if(newHit.hit && (newHit.t < t_min))
-                {
-                    t_min = newHit.t;
-                    currentHit = newHit;
-                    currentHit.materialID = scene.spheres[s_index].material_id;
-                }
+                Ray currentRay = SendRay(currentCam, y, x);
+                currentRay.depth = 0;
 
+                Vec3f color = Clamp(ComputeColor(currentRay, scene));
+
+                image[pixel_index++] =  round(color.x); // R
+                image[pixel_index++] =  round(color.y); // G
+                image[pixel_index++] =  round(color.z); // B
             }
-
-            for(int t_index = 0; t_index < numOfTriangles; t_index++)
-            {
-                Face points = scene.triangles[t_index].indices;
-                int pointAIndex = points.v0_id - 1;
-                int pointBIndex = points.v1_id - 1;
-                int pointCIndex = points.v2_id - 1;
-                Hit newHit = TriangleIntersection(currentRay,scene.vertex_data[pointAIndex],scene.vertex_data[pointBIndex],scene.vertex_data[pointCIndex]);
-
-                if(newHit.hit && (newHit.t < t_min))
-                {
-                    t_min = newHit.t;
-                    currentHit = newHit;
-                    currentHit.materialID = scene.triangles[t_index].material_id;
-                }
-            }
-
-            for(int m_index = 0; m_index < numOfMeshes; m_index++)
-            {
-                Hit newHit = MeshIntersection(currentRay, scene.meshes[m_index], scene);
-
-                if(newHit.hit && (newHit.t < t_min))
-                {
-                    t_min = newHit.t;
-                    currentHit = newHit;
-                    currentHit.materialID = scene.meshes[m_index].material_id;
-                }
-            }
-//            int centerID = scene.spheres[0].center_vertex_id - 1;
-//            Hit currentHit = SphereIntersection(currentRay,scene.spheres[0],scene.vertex_data[centerID]);
-            
-            if(currentHit.hit)
-            {
-                Vec3i color = CalculateShading(scene, scene.materials[currentHit.materialID-1],currentHit, currentRay);
-
-                image[i++] =  round(color.x); // R
-                image[i++] =  round(color.y); // G
-                image[i++] =  round(color.z); // B
-            }
-            else
-            {
-                image[i++] = backGroundColor.x;
-                image[i++] = backGroundColor.y;
-                image[i++] = backGroundColor.z;
-            }
-
-            j++; // increment pixelID
         }
+
+        write_ppm(currentCam.image_name.c_str(), image, width, height);
     }
-
-    write_ppm("test.ppm", image, width, height);
-
 }
