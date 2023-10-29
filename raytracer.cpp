@@ -3,7 +3,9 @@
 #include "ppm.h"
 #include <cmath>
 #include <limits>
-
+#include <chrono>
+#include <thread>
+#include <mutex>
 
 using namespace std;
 using namespace parser;
@@ -36,7 +38,7 @@ public:
     Vec3i color; // color of the intersection point
 };
 
-Vec3f CrossProduct(Vec3f first, Vec3f second){
+Vec3f CrossProduct(const Vec3f &first, const Vec3f &second){
     Vec3f result = {0,0,0};
     result.x = first.y * second.z - first.z * second.y;
     result.y = first.z * second.x - first.x * second.z;
@@ -44,7 +46,7 @@ Vec3f CrossProduct(Vec3f first, Vec3f second){
 
     return result;
 }
-Vec3f Clamp(Vec3f vector)
+Vec3f Clamp(const Vec3f &vector)
 {
     Vec3f result{};
     result.x = fminf(vector.x, 255);
@@ -54,49 +56,70 @@ Vec3f Clamp(Vec3f vector)
 }
 
 
-float DotProduct(Vec3f first, Vec3f second){
+float DotProduct(const Vec3f &first, const Vec3f &second){
     return first.x * second.x + first.y * second.y + first.z * second.z;
 }
 
-Vec3f NegateVector(Vec3f vector)
+Vec3f NegateVector(const Vec3f &vector)
 {
     return {-vector.x, -vector.y, -vector.z};
 }
 
-Vec3f SumVectors(Vec3f first, Vec3f second)
+Vec3f SumVectors(const Vec3f &first, const Vec3f &second)
 {
     return {first.x + second.x, first.y + second.y, first.z + second.z };
 }
 
-Vec3f SubtractVectors(Vec3f first, Vec3f second)
+Vec3f SubtractVectors(const Vec3f &first, const Vec3f &second)
 {
     return {first.x - second.x, first.y - second.y, first.z - second.z };
 }
 
-Vec3f MultiplyVector(Vec3f v, float c)
+Vec3f MultiplyVector(const Vec3f &v, float c)
 {
     return {v.x * c, v.y * c, v.z * c};
 }
 
-Vec3f Normalize(Vec3f vector)
+Vec3f Normalize(const Vec3f &vector)
 {
     float magnitude = sqrtf(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
     return {vector.x / magnitude, vector.y / magnitude, vector.z / magnitude };
 }
 
-float Determinant(Vec3f v1, Vec3f v2, Vec3f v3)
+float Determinant(const Vec3f &v1, const Vec3f &v2, const Vec3f &v3)
 {
     return v1.x * (v2.y * v3.z - v3.y * v2.z) - v1.y * (v2.x * v3.z - v3.x * v2.z) + v1.z * (v2.x * v3.y - v3.x * v2.y);
 }
 
-Vec3f FindNormal(Vec3f a, Vec3f b, Vec3f c)
+Vec3f FindNormal(const Vec3f &a, const Vec3f &b, const Vec3f &c)
 {
-    return Normalize(CrossProduct(SubtractVectors(b,a), SubtractVectors(c,a)));  // May not be true. The direction may be different. need to check.
+    return Normalize(CrossProduct(SubtractVectors(b,a), SubtractVectors(c,a)));
 }
 
-float CalculateDistance(Vec3f a, Vec3f b)
+float CalculateDistance(const Vec3f &a, const Vec3f &b)
 {
     return sqrtf(powf((a.x-b.x),2)+powf((a.y-b.y),2)+powf((a.z-b.z),2));
+}
+
+Vec3f** CalculateJaggedMeshNormals(Scene &scene)
+{
+    int rows = scene.meshes.size();
+    Vec3f** resultArray = new Vec3f*[rows];
+
+    for(int i = 0; i < rows; i++)
+    {
+        int numOfFaces = scene.meshes[i].faces.size();
+        resultArray[i] = new Vec3f[numOfFaces];
+
+        for(int j = 0; j < numOfFaces; j++)
+        {
+            Face currentFace = scene.meshes[i].faces[j];
+            Vec3f currentNormal = FindNormal(scene.vertex_data[currentFace.v0_id-1],scene.vertex_data[currentFace.v1_id-1],scene.vertex_data[currentFace.v2_id-1]);
+            resultArray[i][j] = currentNormal;
+        }
+    }
+
+    return resultArray;
 }
 
 Ray SendRay(const Camera &camera, int i, int j)
@@ -139,7 +162,7 @@ Ray SendRay(const Camera &camera, int i, int j)
     return ray;
 }
 
-Hit SphereIntersection(Ray ray, const Sphere &sphere, Vec3f center)
+Hit SphereIntersection(const Ray &ray, const Sphere &sphere, const Vec3f &center)
 {
     Hit result_hit{};
     double A,B,C,t;
@@ -194,11 +217,25 @@ Hit SphereIntersection(Ray ray, const Sphere &sphere, Vec3f center)
     return result_hit;
 }
 
-Hit TriangleIntersection(const Ray &ray, Vec3f a, Vec3f b, Vec3f c)
+Hit TriangleIntersection(const Ray &ray, const Vec3f &a, const Vec3f &b, const Vec3f &c, bool isMesh, int meshID, int faceID, Vec3f** &faceNormals)
 {
     Hit result_hit{};
     result_hit.hit = false;
 
+    Vec3f faceNormal;
+    if(!isMesh)
+    {
+        faceNormal = FindNormal(a,b,c);
+    }
+    else
+    {
+        faceNormal = faceNormals[meshID][faceID];
+    }
+    
+    if(!ray.isShadow && DotProduct(faceNormal, ray.direction) > 0)
+    {
+        return result_hit;
+    }
     float alpha, beta, gamma, t, detA;
     Vec3f minusD = NegateVector(ray.direction);
     Vec3f a_minus_c = SubtractVectors(a,c);
@@ -223,7 +260,7 @@ Hit TriangleIntersection(const Ray &ray, Vec3f a, Vec3f b, Vec3f c)
         result_hit.hit = true;
         result_hit.t = t;
         result_hit.x = intersectionPoint;
-        result_hit.normal = FindNormal(a,b,c);
+        result_hit.normal = faceNormal;
         return result_hit;
     }
 
@@ -231,7 +268,7 @@ Hit TriangleIntersection(const Ray &ray, Vec3f a, Vec3f b, Vec3f c)
     return result_hit;
 }
 
-Hit MeshIntersection(Ray ray, const Mesh &mesh, const Scene &scene, double dist = 0.0)
+Hit MeshIntersection(const Ray &ray, const Mesh &mesh, const Scene &scene, int meshID, Vec3f** &faceNormals, double dist = 0.0)
 {
     int faceCount = mesh.faces.size();
     double t_minMesh = ray.isShadow? dist: numeric_limits<double>::infinity();
@@ -243,7 +280,8 @@ Hit MeshIntersection(Ray ray, const Mesh &mesh, const Scene &scene, double dist 
         Vec3f b = scene.vertex_data[mesh.faces[faceIndex].v1_id - 1];
         Vec3f c = scene.vertex_data[mesh.faces[faceIndex].v2_id - 1];
 
-        Hit hit = TriangleIntersection(ray, a, b, c);
+        Hit hit = TriangleIntersection(ray, a, b, c, true, meshID, faceIndex, faceNormals);
+
         if(hit.hit && hit.t < t_minMesh)
         {
             if(ray.isShadow)
@@ -259,7 +297,7 @@ Hit MeshIntersection(Ray ray, const Mesh &mesh, const Scene &scene, double dist 
     return resultHit;
 }
 
-Hit ClosestHit(Ray ray, const Scene &scene)
+Hit ClosestHit(const Ray &ray, const Scene &scene, Vec3f** &faceNormals)
 {
     int numOfSpheres = scene.spheres.size();
     int numOfTriangles = scene.triangles.size();
@@ -287,7 +325,7 @@ Hit ClosestHit(Ray ray, const Scene &scene)
         int pointAIndex = points.v0_id - 1;
         int pointBIndex = points.v1_id - 1;
         int pointCIndex = points.v2_id - 1;
-        Hit newHit = TriangleIntersection(ray,scene.vertex_data[pointAIndex],scene.vertex_data[pointBIndex],scene.vertex_data[pointCIndex]);
+        Hit newHit = TriangleIntersection(ray,scene.vertex_data[pointAIndex],scene.vertex_data[pointBIndex],scene.vertex_data[pointCIndex], false, 0,0, faceNormals);
 
         if(newHit.hit && (newHit.t < t_min))
         {
@@ -299,7 +337,7 @@ Hit ClosestHit(Ray ray, const Scene &scene)
 
     for(int m_index = 0; m_index < numOfMeshes; m_index++)
     {
-        Hit newHit = MeshIntersection(ray, scene.meshes[m_index], scene);
+        Hit newHit = MeshIntersection(ray, scene.meshes[m_index], scene, m_index, faceNormals);
 
         if(newHit.hit && (newHit.t < t_min))
         {
@@ -311,7 +349,7 @@ Hit ClosestHit(Ray ray, const Scene &scene)
     return currentHit;
 }
 
-bool InShadow(Hit hit, const Scene &scene, PointLight I)
+bool InShadow(const Hit &hit, const Scene &scene, const PointLight &I, Vec3f** &faceNormals)
 {
     int numOfSpheres = scene.spheres.size();
     int numOfTriangles = scene.triangles.size();
@@ -321,15 +359,7 @@ bool InShadow(Hit hit, const Scene &scene, PointLight I)
     Vec3f epsilonedPoint = SumVectors(MultiplyVector(hit.normal, scene.shadow_ray_epsilon), hit.x);
     double dist = CalculateDistance(lightPos,epsilonedPoint);
     Vec3f direction = Normalize(SubtractVectors(lightPos, epsilonedPoint));
-    Ray shadowRay {epsilonedPoint, direction, true, 0};
-
-
-    for(int m_index = 0; m_index < numOfMeshes; m_index++)
-    {
-        Mesh mesh = scene.meshes[m_index];
-        if(MeshIntersection(shadowRay, mesh, scene, dist).hit)
-            return true;
-    }
+    Ray shadowRay {epsilonedPoint, direction, true, 0}; 
 
     for(int t_index = 0; t_index < numOfTriangles; t_index++)
     {
@@ -337,7 +367,7 @@ bool InShadow(Hit hit, const Scene &scene, PointLight I)
         int pointAIndex = points.v0_id - 1;
         int pointBIndex = points.v1_id - 1;
         int pointCIndex = points.v2_id - 1;
-        Hit newHit = TriangleIntersection(shadowRay, scene.vertex_data[pointAIndex],scene.vertex_data[pointBIndex],scene.vertex_data[pointCIndex]);
+        Hit newHit = TriangleIntersection(shadowRay, scene.vertex_data[pointAIndex],scene.vertex_data[pointBIndex],scene.vertex_data[pointCIndex], false, 0,0,faceNormals);
         if(newHit.hit && newHit.t < dist) return true;
     }
     for(int s_index = 0; s_index < numOfSpheres; s_index++)
@@ -347,12 +377,19 @@ bool InShadow(Hit hit, const Scene &scene, PointLight I)
         Hit newHit = SphereIntersection(shadowRay,sphere,scene.vertex_data[centerID]);
         if(newHit.hit && newHit.t < dist) return true;
     }
+
+    for(int m_index = 0; m_index < numOfMeshes; m_index++)
+    {
+        Mesh mesh = scene.meshes[m_index];
+        if(MeshIntersection(shadowRay, mesh, scene, m_index, faceNormals, dist).hit)
+            return true;
+    }
     return false;
 }
-Vec3f ApplyShading(Ray viewRay, Hit hit, const Scene &scene);
-Vec3f ComputeColor(Ray viewRay, const Scene scene);
+Vec3f ApplyShading(const Ray &viewRay, const Hit &hit, const Scene &scene, Vec3f** &faceNormals);
+Vec3f ComputeColor(const Ray &viewRay, const Scene &scene, const Hit &closestHit, Vec3f** &faceNormals);
 
-Ray Reflect(Ray ray, Hit hit, const float epsilon)
+Ray Reflect(const Ray &ray, const Hit &hit, const float epsilon)
 {
     Vec3f epsilonedPoint = SumVectors(MultiplyVector(hit.normal, epsilon), hit.x);
     Vec3f wo = NegateVector(ray.direction);
@@ -360,7 +397,7 @@ Ray Reflect(Ray ray, Hit hit, const float epsilon)
     return {epsilonedPoint, wr};
 }
 
-Vec3f DiffuseTerm(Hit hit, PointLight light, Material material)
+Vec3f DiffuseTerm(const Hit &hit, const PointLight &light, const Material &material)
 {
     Vec3f result{};
     Vec3f l = Normalize(SubtractVectors(light.position, hit.x));
@@ -374,7 +411,7 @@ Vec3f DiffuseTerm(Hit hit, PointLight light, Material material)
     return result;
 }
 
-Vec3f SpecularTerm(Ray viewRay, Hit hit, PointLight light, Material material)
+Vec3f SpecularTerm(const Ray &viewRay, const Hit &hit, const PointLight &light, const Material &material)
 {
     Vec3f result{};
     Vec3f l = Normalize(SubtractVectors(light.position, hit.x));
@@ -384,13 +421,14 @@ Vec3f SpecularTerm(Ray viewRay, Hit hit, PointLight light, Material material)
     float cosAlpha = fmax(0, DotProduct(h,hit.normal));
     float dist = CalculateDistance(light.position, hit.x);
     Vec3f L_i = {light.intensity.x / (dist * dist), light.intensity.y / (dist * dist), light.intensity.z / (dist * dist)};
-    result.x = L_i.x * material.specular.x * powf(cosAlpha, material.phong_exponent);
-    result.y = L_i.y * material.specular.y * powf(cosAlpha, material.phong_exponent);
-    result.z = L_i.z * material.specular.z * powf(cosAlpha, material.phong_exponent);
+    float phong = powf(cosAlpha,material.phong_exponent);
+    result.x = L_i.x * material.specular.x * phong;
+    result.y = L_i.y * material.specular.y * phong;
+    result.z = L_i.z * material.specular.z * phong;
     return result;
 }
 
-Vec3f ApplyShading(Ray viewRay, Hit hit, const Scene &scene)
+Vec3f ApplyShading(const Ray &viewRay, const Hit &hit, const Scene &scene, Vec3f** &faceNormals)
 {
     int numOfLights = scene.point_lights.size();
     Material material = scene.materials[hit.materialID - 1];
@@ -399,15 +437,17 @@ Vec3f ApplyShading(Ray viewRay, Hit hit, const Scene &scene)
     {
         Ray reflectionRay = Reflect(viewRay, hit, scene.shadow_ray_epsilon);
         reflectionRay.depth = viewRay.depth + 1;
+        Hit closestHit = ClosestHit(reflectionRay, scene, faceNormals);
+        Vec3f tempColor = ComputeColor(reflectionRay, scene, closestHit, faceNormals);
 
-        color.x += ComputeColor(reflectionRay, scene).x * material.mirror.x;
-        color.y += ComputeColor(reflectionRay, scene).y * material.mirror.y;
-        color.z += ComputeColor(reflectionRay, scene).z * material.mirror.z;
+        color.x += tempColor.x * material.mirror.x;
+        color.y += tempColor.y * material.mirror.y;
+        color.z += tempColor.z * material.mirror.z;
     }
     for(int l_index = 0; l_index < numOfLights; l_index++)
     {
         PointLight I = scene.point_lights[l_index];
-        if(!InShadow(hit, scene, I))
+        if(!InShadow(hit, scene, I, faceNormals))
         {
 
             Vec3f diffuseTerm = DiffuseTerm(hit, I, material);
@@ -420,14 +460,13 @@ Vec3f ApplyShading(Ray viewRay, Hit hit, const Scene &scene)
     return color;
 }
 
-Vec3f ComputeColor(Ray viewRay, const Scene scene)
+Vec3f ComputeColor(const Ray &viewRay, const Scene &scene, const Hit &closestHit, Vec3f** &faceNormals)
 {
     if(viewRay.depth > scene.max_recursion_depth)
         return {0,0,0};
 
-    Hit closestHit = ClosestHit(viewRay, scene);
     if(closestHit.hit)
-        return ApplyShading(viewRay, closestHit, scene);
+        return ApplyShading(viewRay, closestHit, scene, faceNormals);
     else if (viewRay.depth == 0)
     {
         Vec3f result{};
@@ -440,38 +479,60 @@ Vec3f ComputeColor(Ray viewRay, const Scene scene)
         return {0,0,0};
 }
 
+void f1(Scene &scene, Camera &currentCam, int width, unsigned char* &image, Vec3f** JaggedArrayMeshNormals, int y, int x)
+{
+    int pixel_index = (y * width + x) * 3;
+    Ray currentRay = SendRay(currentCam, y, x);
+    currentRay.depth = 0;
+    Hit closestHit = ClosestHit(currentRay, scene, JaggedArrayMeshNormals);
+    Vec3f color = Clamp(ComputeColor(currentRay, scene, closestHit, JaggedArrayMeshNormals));
+
+    image[pixel_index] =  round(color.x); // R
+    image[pixel_index+1] =  round(color.y); // G
+    image[pixel_index+2] =  round(color.z); // B
+}
+
 int main(int argc, char* argv[])
 {
     parser::Scene scene;
 
     scene.loadFromXml(argv[1]);
 
+    Vec3f** JaggedArrayMeshNormals = CalculateJaggedMeshNormals(scene);
+
     int numOfCameras = scene.cameras.size();
     for(int c_index = 0; c_index < numOfCameras; c_index++)
     {
-        Camera currentCam = scene.cameras[0];
+        Camera currentCam = scene.cameras[c_index];
+        auto start = std::chrono::high_resolution_clock::now();
+        cout << "Rendering " << currentCam.image_name.c_str() << " ...\n";
         int width = currentCam.image_width , height = currentCam.image_height;
 
+        unsigned int threadCount = std::thread::hardware_concurrency();
+        std::vector<thread> myThreads;
+        unsigned char *image = new unsigned char[width * height * 3];
 
-        unsigned char* image = new unsigned char [width * height * 3];
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; x += threadCount) {
+                myThreads.clear(); // Clear the vector before launching new threads
 
-        int pixel_index = 0;
-        for (int y = 0; y < height; ++y)
-        {
-            for (int x = 0; x < width; ++x)
-            {
+                for (int i = 0; i < threadCount && x + i < width; i++)
+                {
+                    myThreads.emplace_back(f1, std::ref(scene), std::ref(currentCam), width, std::ref(image),
+                                               JaggedArrayMeshNormals, y, x + i);
+                }
 
-                Ray currentRay = SendRay(currentCam, y, x);
-                currentRay.depth = 0;
 
-                Vec3f color = Clamp(ComputeColor(currentRay, scene));
-
-                image[pixel_index++] =  round(color.x); // R
-                image[pixel_index++] =  round(color.y); // G
-                image[pixel_index++] =  round(color.z); // B
+                // Join the threads before moving to the next iteration
+                for (std::thread &t : myThreads) {
+                    t.join();
+                }
             }
         }
-
         write_ppm(currentCam.image_name.c_str(), image, width, height);
+        cout << "Rendering Complete.\n";
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> duration = end - start;
+        cout << "Time taken to render " << currentCam.image_name.c_str() << ": " << (int) duration.count()/60 << " min " << fmod(duration.count(),60) << " sec.\n";
     }
 }
