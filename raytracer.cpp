@@ -3,13 +3,10 @@
 #include "ppm.h"
 #include <cmath>
 #include <limits>
-#include <chrono>
 #include <thread>
-#include <mutex>
 
 using namespace std;
 using namespace parser;
-typedef unsigned char RGB[3];
 
 class Ray
 {
@@ -47,7 +44,7 @@ Vec3f CrossProduct(const Vec3f &first, const Vec3f &second){
     return result;
 }
 Vec3f Clamp(const Vec3f &vector)
-{
+{ 
     Vec3f result{};
     result.x = fminf(vector.x, 255);
     result.y = fminf(vector.y, 255);
@@ -75,7 +72,7 @@ Vec3f SubtractVectors(const Vec3f &first, const Vec3f &second)
     return {first.x - second.x, first.y - second.y, first.z - second.z };
 }
 
-Vec3f MultiplyVector(const Vec3f &v, float c)
+Vec3f MultiplyVector(const Vec3f &v, float  c)
 {
     return {v.x * c, v.y * c, v.z * c};
 }
@@ -139,39 +136,26 @@ Ray SendRay(const Camera &camera, int i, int j)
     Vec3f v = camera.up;
     Vec3f u = Normalize(CrossProduct(v,w));
 
-    Vec3f m{}, q{};
+    Vec3f m = {e.x - (w.x * camera.near_distance), e.y - (w.y * camera.near_distance), e.z - (w.z * camera.near_distance)};
+    Vec3f q = {m.x + u.x*left + v.x*top, m.y + u.y*left + v.y*top, m.z + u.z*left + v.z*top };
 
-    m.x = e.x - (w.x * camera.near_distance);
-    m.y = e.y - (w.y * camera.near_distance);
-    m.z = e.z - (w.z * camera.near_distance);
+    Vec3f s = {q.x + u.x*su - v.x * sv, q.y + u.y*su - v.y * sv, q.z + u.z*su - v.z * sv};
+    Vec3f d = Normalize(SubtractVectors(s,e));
 
-
-    q.x = m.x + u.x*left + v.x*top;
-    q.y = m.y + u.y*left + v.y*top;
-    q.z = m.z + u.z*left + v.z*top;
-
-    Vec3f s,d;
-    s.x = q.x + u.x*su - v.x * sv;
-    s.y = q.y + u.y*su - v.y * sv;
-    s.z = q.z + u.z*su - v.z * sv;
-
-    d = Normalize(SubtractVectors(s,e));
     Ray ray {e, d};
-    ray.isShadow = false;
-
     return ray;
 }
 
 Hit SphereIntersection(const Ray &ray, const Sphere &sphere, const Vec3f &center)
 {
     Hit result_hit{};
-    double A,B,C,t;
+    float A,B,C,t;
     Vec3f o_minus_c = SubtractVectors(ray.origin, center);
     A = DotProduct(ray.direction,ray.direction);
     B = 2 * DotProduct(ray.direction, o_minus_c);
     C = DotProduct(o_minus_c, o_minus_c) - (sphere.radius * sphere.radius);
 
-    double delta = (B*B) - (4 * A * C);
+    float delta = (B*B) - (4 * A * C);
 
     if(delta < 0.0)
     {
@@ -191,8 +175,8 @@ Hit SphereIntersection(const Ray &ray, const Sphere &sphere, const Vec3f &center
         return result_hit;
     }
 
-    double t1 = (-B + sqrtf(delta))/(2 * A);
-    double t2 = (-B - sqrtf(delta))/(2 * A);
+    float t1 = (-B + sqrtf(delta))/(2 * A);
+    float t2 = (-B - sqrtf(delta))/(2 * A);
     if(t1 < 0 && t2 < 0)
     {
         result_hit.hit = false;
@@ -268,10 +252,10 @@ Hit TriangleIntersection(const Ray &ray, const Vec3f &a, const Vec3f &b, const V
     return result_hit;
 }
 
-Hit MeshIntersection(const Ray &ray, const Mesh &mesh, const Scene &scene, int meshID, Vec3f** &faceNormals, double dist = 0.0)
+Hit MeshIntersection(const Ray &ray, const Mesh &mesh, const Scene &scene, int meshID, Vec3f** &faceNormals, float dist = 0.0)
 {
     int faceCount = mesh.faces.size();
-    double t_minMesh = ray.isShadow? dist: numeric_limits<double>::infinity();
+    float t_minMesh = ray.isShadow? dist: numeric_limits<float >::infinity();
     Hit resultHit{};
 
     for(int faceIndex = 0; faceIndex < faceCount; faceIndex++)
@@ -303,7 +287,7 @@ Hit ClosestHit(const Ray &ray, const Scene &scene, Vec3f** &faceNormals)
     int numOfTriangles = scene.triangles.size();
     int numOfMeshes = scene.meshes.size();
     Hit currentHit{};
-    float t_min = std::numeric_limits<float>::infinity();
+    float t_min = std::numeric_limits<float >::infinity();
 
     for(int s_index = 0; s_index < numOfSpheres; s_index++)
     {
@@ -357,7 +341,7 @@ bool InShadow(const Hit &hit, const Scene &scene, const PointLight &I, Vec3f** &
 
     Vec3f lightPos = I.position;
     Vec3f epsilonedPoint = SumVectors(MultiplyVector(hit.normal, scene.shadow_ray_epsilon), hit.x);
-    double dist = CalculateDistance(lightPos,epsilonedPoint);
+    float dist = CalculateDistance(lightPos,epsilonedPoint);
     Vec3f direction = Normalize(SubtractVectors(lightPos, epsilonedPoint));
     Ray shadowRay {epsilonedPoint, direction, true, 0}; 
 
@@ -393,7 +377,7 @@ Ray Reflect(const Ray &ray, const Hit &hit, const float epsilon)
 {
     Vec3f epsilonedPoint = SumVectors(MultiplyVector(hit.normal, epsilon), hit.x);
     Vec3f wo = NegateVector(ray.direction);
-    Vec3f wr = Normalize(SubtractVectors(MultiplyVector(hit.normal,(2 * DotProduct(hit.normal, wo))) , wo)); //TODO need to check if something goes wrong.
+    Vec3f wr = Normalize(SubtractVectors(MultiplyVector(hit.normal,(2 * DotProduct(hit.normal, wo))) , wo));
     return {epsilonedPoint, wr};
 }
 
@@ -504,35 +488,23 @@ int main(int argc, char* argv[])
     for(int c_index = 0; c_index < numOfCameras; c_index++)
     {
         Camera currentCam = scene.cameras[c_index];
-        auto start = std::chrono::high_resolution_clock::now();
-        cout << "Rendering " << currentCam.image_name.c_str() << " ...\n";
         int width = currentCam.image_width , height = currentCam.image_height;
 
         unsigned int threadCount = std::thread::hardware_concurrency();
         std::vector<thread> myThreads;
         unsigned char *image = new unsigned char[width * height * 3];
-
         for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; x += threadCount) {
+            for (int x = 0; x < width; x += threadCount)
+            {
                 myThreads.clear(); // Clear the vector before launching new threads
-
                 for (int i = 0; i < threadCount && x + i < width; i++)
-                {
                     myThreads.emplace_back(f1, std::ref(scene), std::ref(currentCam), width, std::ref(image),
-                                               JaggedArrayMeshNormals, y, x + i);
-                }
+                                           JaggedArrayMeshNormals, y, x + i);
 
-
-                // Join the threads before moving to the next iteration
-                for (std::thread &t : myThreads) {
+                for (std::thread &t : myThreads)
                     t.join();
-                }
             }
         }
         write_ppm(currentCam.image_name.c_str(), image, width, height);
-        cout << "Rendering Complete.\n";
-        auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> duration = end - start;
-        cout << "Time taken to render " << currentCam.image_name.c_str() << ": " << (int) duration.count()/60 << " min " << fmod(duration.count(),60) << " sec.\n";
     }
 }
